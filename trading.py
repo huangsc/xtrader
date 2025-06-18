@@ -4,7 +4,6 @@ import numpy as np
 from binance.client import Client
 from binance.enums import *
 from binance.exceptions import BinanceAPIException
-import talib as ta
 import requests
 from datetime import datetime
 import threading
@@ -357,24 +356,26 @@ def calculate_indicators(df):
     try:
         # 基础指标
         df['momentum'] = df['close'] / df['close'].shift(20) - 1
-        df['rsi'] = ta.RSI(df['close'], timeperiod=14)
-        df['atr'] = ta.ATR(df['high'], df['low'], df['close'], timeperiod=14)
         
-        # 移动平均
-        df['ema30'] = ta.EMA(df['close'], timeperiod=30)
-        df['ema50'] = ta.EMA(df['close'], timeperiod=50)
+        # RSI指标 - 使用Wilder's平滑法
+        df['rsi'] = calculate_rsi_accurate(df['close'], 14)
+        
+        # ATR指标 - 真实波动范围
+        df['atr'] = calculate_atr_accurate(df['high'], df['low'], df['close'], 14)
+        
+        # 指数移动平均
+        df['ema30'] = calculate_ema_accurate(df['close'], 30)
+        df['ema50'] = calculate_ema_accurate(df['close'], 50)
         
         # 布林带
-        df['bb_upper'], df['bb_middle'], df['bb_lower'] = ta.BBANDS(
-            df['close'], timeperiod=20, nbdevup=2, nbdevdn=2
-        )
+        df['bb_upper'], df['bb_middle'], df['bb_lower'] = calculate_bollinger_bands(df['close'], 20, 2)
         
         # 成交量指标
         df['volume_ma20'] = df['volume'].rolling(20).mean()
         df['volume_ratio'] = df['volume'] / df['volume_ma20']
         
         # ADX趋势强度指标
-        df['adx'] = ta.ADX(df['high'], df['low'], df['close'], timeperiod=14)
+        df['adx'] = calculate_adx_accurate(df['high'], df['low'], df['close'], 14)
         
         # 市场状态检测
         df['market_state'] = df.apply(lambda row: detect_market_regime(row), axis=1)
@@ -383,6 +384,107 @@ def calculate_indicators(df):
     except Exception as e:
         logger.error(f"指标计算失败: {str(e)}")
         return None
+
+def calculate_rsi_accurate(close, period=14):
+    """
+    精确计算RSI指标 - 使用Wilder's平滑方法
+    """
+    delta = close.diff()
+    
+    # 分离上涨和下跌
+    gains = delta.where(delta > 0, 0.0)
+    losses = (-delta).where(delta < 0, 0.0)
+    
+    # 使用Wilder's平滑方法 (alpha = 1/period)
+    alpha = 1.0 / period
+    
+    # 计算平均增益和平均损失
+    avg_gains = gains.ewm(alpha=alpha, adjust=False).mean()
+    avg_losses = losses.ewm(alpha=alpha, adjust=False).mean()
+    
+    # 计算相对强度和RSI
+    rs = avg_gains / avg_losses
+    rsi = 100 - (100 / (1 + rs))
+    
+    return rsi
+
+def calculate_ema_accurate(close, period):
+    """
+    精确计算指数移动平均 - 标准EMA算法
+    """
+    alpha = 2.0 / (period + 1)
+    return close.ewm(alpha=alpha, adjust=False).mean()
+
+def calculate_atr_accurate(high, low, close, period=14):
+    """
+    精确计算平均真实范围(ATR) - Wilder's方法
+    """
+    # 计算真实范围的三个组成部分
+    tr1 = high - low
+    tr2 = (high - close.shift()).abs()
+    tr3 = (low - close.shift()).abs()
+    
+    # 真实范围是三者中的最大值
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    
+    # 使用Wilder's平滑方法计算ATR
+    alpha = 1.0 / period
+    atr = true_range.ewm(alpha=alpha, adjust=False).mean()
+    
+    return atr
+
+def calculate_bollinger_bands(close, period=20, std_dev=2):
+    """
+    精确计算布林带
+    """
+    # 中轨：简单移动平均
+    middle = close.rolling(period).mean()
+    
+    # 标准差
+    std = close.rolling(period).std()
+    
+    # 上轨和下轨
+    upper = middle + (std * std_dev)
+    lower = middle - (std * std_dev)
+    
+    return upper, middle, lower
+
+def calculate_adx_accurate(high, low, close, period=14):
+    """
+    精确计算ADX指标 - 使用标准Wilder's方法
+    """
+    # 计算真实范围
+    tr1 = high - low
+    tr2 = (high - close.shift()).abs()
+    tr3 = (low - close.shift()).abs()
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    
+    # 计算方向运动
+    dm_plus = high.diff()
+    dm_minus = low.diff() * -1
+    
+    # 只保留有效的方向运动
+    dm_plus = dm_plus.where((dm_plus > dm_minus) & (dm_plus > 0), 0)
+    dm_minus = dm_minus.where((dm_minus > dm_plus) & (dm_minus > 0), 0)
+    
+    # 使用Wilder's平滑
+    alpha = 1.0 / period
+    
+    atr_smooth = true_range.ewm(alpha=alpha, adjust=False).mean()
+    dm_plus_smooth = dm_plus.ewm(alpha=alpha, adjust=False).mean()
+    dm_minus_smooth = dm_minus.ewm(alpha=alpha, adjust=False).mean()
+    
+    # 计算方向指标
+    di_plus = 100 * (dm_plus_smooth / atr_smooth)
+    di_minus = 100 * (dm_minus_smooth / atr_smooth)
+    
+    # 计算DX
+    dx = 100 * (di_plus - di_minus).abs() / (di_plus + di_minus)
+    
+    # 计算ADX (DX的平滑值)
+    adx = dx.ewm(alpha=alpha, adjust=False).mean()
+    
+    return adx
 
 def detect_market_regime(row):
     """市场状态检测器"""
