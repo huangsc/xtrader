@@ -1033,23 +1033,48 @@ def initialize_account():
         
         for symbol in TRADE_SYMBOLS:
             try:
-                # 设置隔离保证金
-                client.safe_request(
-                    client.client.futures_change_margin_type,
-                    symbol=symbol, marginType='ISOLATED'
-                )
+                # 先获取当前持仓信息，检查保证金类型
+                try:
+                    position_info = client.safe_request(
+                        client.client.futures_position_information,
+                        symbol=symbol
+                    )
+                    current_margin_type = position_info[0].get('marginType', 'isolated').lower()
+                    
+                    # 只有在不是隔离保证金时才设置
+                    if current_margin_type != 'isolated':
+                        client.safe_request(
+                            client.client.futures_change_margin_type,
+                            symbol=symbol, marginType='ISOLATED'
+                        )
+                        logger.info(f"{symbol} 保证金类型已设置为隔离模式")
+                    else:
+                        logger.info(f"{symbol} 已是隔离保证金模式")
+                        
+                except Exception as margin_e:
+                    if "No need to change margin type" in str(margin_e):
+                        logger.info(f"{symbol} 保证金类型已正确设置")
+                    else:
+                        logger.warning(f"{symbol} 保证金设置警告: {str(margin_e)}")
                 
-                # 设置杠杆
-                client.safe_request(
-                    client.client.futures_change_leverage,
-                    symbol=symbol, leverage=CONFIG['LEVERAGE']
-                )
+                # 设置杠杆（总是尝试设置，因为可能需要调整）
+                try:
+                    client.safe_request(
+                        client.client.futures_change_leverage,
+                        symbol=symbol, leverage=CONFIG['LEVERAGE']
+                    )
+                    logger.info(f"{symbol} 杠杆已设置为 {CONFIG['LEVERAGE']}x")
+                except Exception as leverage_e:
+                    if "leverage not modified" in str(leverage_e).lower():
+                        logger.info(f"{symbol} 杠杆已是 {CONFIG['LEVERAGE']}x")
+                    else:
+                        logger.warning(f"{symbol} 杠杆设置警告: {str(leverage_e)}")
                 
                 logger.info(f"{symbol} 期货初始化完成")
                 
             except Exception as e:
                 logger.error(f"{symbol} 期货初始化失败: {str(e)}")
-                send_telegram(f"❌ {symbol} 期货初始化失败")
+                send_telegram(f"❌ {symbol} 期货初始化失败: {str(e)}")
     else:  # spot
         logger.info("开始初始化现货账户...")
         
