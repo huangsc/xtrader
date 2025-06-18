@@ -1,0 +1,7 @@
+python-binance==1.0.29
+pandas==2.2.2
+numpy==1.26.4
+TA-Lib==0.6.4
+requests==2.32.4
+psutil==5.9.8
+urllib3==2.2.2 

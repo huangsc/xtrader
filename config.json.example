@@ -1,0 +1,96 @@
+{
+  // ======================
+  // API 配置 - 交易所连接设置
+  // ======================
+  "api": {
+    "api_key": "YOUR_API_KEY",           // Binance API密钥 - 在币安官网申请
+    "api_secret": "YOUR_API_SECRET",     // Binance API秘钥 - 配合密钥使用
+    "testnet": true,                     // 测试模式 - true为测试环境，false为实盘环境
+    "trading_type": "spot"               // 交易类型 - "spot"现货交易，"futures"期货交易
+  },
+  
+  // ======================
+  // Telegram 通知配置
+  // ======================
+  "telegram": {
+    "token": "YOUR_TELEGRAM_TOKEN",      // Telegram机器人Token - 从@BotFather获取
+    "chat_id": "YOUR_CHAT_ID"           // Telegram聊天ID - 接收通知的群组或个人ID
+  },
+  
+  // ======================
+  // 核心交易参数
+  // ======================
+  "trading": {
+    "initial_balance": 1000.0,           // 初始资金 - 用于计算仓位大小的基准金额
+    "leverage": 2,                       // 杠杆倍数 - 建议1-3倍，过高风险极大
+    "risk_percent": 0.0225,              // 单笔风险比例 - 每笔交易风险占总资金的百分比(2.25%)
+    "max_daily_trades": 4,               // 每日最大交易次数 - 防止过度交易
+    "trade_interval": "15m"              // 交易时间框架 - 支持1m,3m,5m,15m,30m,1h,4h,1d
+  },
+  
+  // ======================
+  // 安全保护参数
+  // ======================
+  "safety": {
+    "max_slippage": 0.005,               // 最大滑点容忍度 - 0.5%，超过此值取消交易
+    "api_retries": 3,                    // API调用重试次数 - 网络异常时自动重试
+    "api_timeout": 10,                   // API超时时间(秒) - 请求超时限制
+    "max_open_orders": 5,                // 最大挂单数量 - 防止订单过多系统过载
+    "memory_limit": 70,                  // 内存使用限制(%) - 超过此值暂停交易
+    "volatility_factor": 1.5             // 波动率过滤因子 - ATR超过均值1.5倍时跳过交易
+  },
+  
+  // ======================
+  // 风险控制参数
+  // ======================
+  "risk_control": {
+    "risk_floor": 800,                   // 资金保护下限($) - 账户低于此值停止所有交易
+    "profit_ceiling": 1300,              // 盈利保护上限($) - 账户超过此值降低风险参数
+    "daily_loss_limit": 0.06,            // 每日亏损限制(6%) - 单日亏损超过此比例停止当日交易
+    "max_drawdown": 0.12                 // 最大回撤限制(12%) - 从高点回撤超过此值暂停交易
+  },
+  
+  // ======================
+  // 交易品种配置
+  // ======================
+  "symbols": {
+    "BTCUSDT": {
+      "risk_weight": 0.6,                // 风险权重 - 该币种占总风险预算的比例(60%)
+      "min_qty": 0.001,                  // 最小交易数量 - 交易所限制的最小下单量
+      "max_position_usd": 300,            // 单币种最大持仓($) - 防止单一品种风险过度集中
+      "stop_multiplier": {                // 止损倍数 - 基于ATR计算止损距离
+        "MOMENTUM": 1.8,                  // 动量策略止损倍数 - ATR的1.8倍
+        "SWING": 1.3                      // 波段策略止损倍数 - ATR的1.3倍
+      },
+      "profit_multiplier": {              // 止盈倍数 - 基于ATR计算止盈距离
+        "MOMENTUM": 3.5,                  // 动量策略止盈倍数 - ATR的3.5倍
+        "SWING": 2.5                      // 波段策略止盈倍数 - ATR的2.5倍
+      }
+    },
+    "ETHUSDT": {
+      "risk_weight": 0.4,                // 风险权重 - 该币种占总风险预算的比例(40%)
+      "min_qty": 0.01,                   // 最小交易数量
+      "max_position_usd": 200,            // 单币种最大持仓($)
+      "stop_multiplier": {
+        "MOMENTUM": 1.8,                  // 动量策略止损倍数
+        "SWING": 1.3                      // 波段策略止损倍数
+      },
+      "profit_multiplier": {
+        "MOMENTUM": 3.5,                  // 动量策略止盈倍数
+        "SWING": 2.5                      // 波段策略止盈倍数
+      }
+    }
+  },
+  
+  // ======================
+  // 系统运行参数
+  // ======================
+  "system": {
+    "log_level": "INFO",                 // 日志级别 - DEBUG/INFO/WARNING/ERROR
+    "log_max_size": 5242880,             // 单个日志文件最大大小(字节) - 5MB
+    "log_backup_count": 3,               // 日志文件备份数量 - 保留3个历史日志文件
+    "recovery_save_interval": 1800,      // 状态保存间隔(秒) - 每30分钟保存一次系统状态
+    "system_monitor_interval": 300,      // 系统监控检查间隔(秒) - 每5分钟检查系统资源
+    "performance_window": 20             // 性能评估窗口 - 基于最近20笔交易优化参数
+  }
+} 
