@@ -82,6 +82,8 @@ def load_config(config_file='config.json'):
             'TRADING_TYPE': config_data['api'].get('trading_type', 'spot'),  # 默认现货
             'TELEGRAM_TOKEN': config_data['telegram']['token'],
             'TELEGRAM_CHAT_ID': config_data['telegram']['chat_id'],
+            'MARKET_DATA_INTERVAL': config_data['telegram'].get('market_data_interval', 300),
+            'ENABLE_MARKET_DATA': config_data['telegram'].get('enable_market_data', True),
             
             # 核心策略参数
             'INITIAL_BALANCE': config_data['trading']['initial_balance'],
@@ -265,7 +267,7 @@ def system_guard(func):
 # ======================
 # 工具函数增强
 # ======================
-def send_telegram(message):
+def send_telegram(message, silent=False):
     """增强的Telegram通知"""
     if CONFIG['TELEGRAM_TOKEN'] and CONFIG['TELEGRAM_CHAT_ID']:
         try:
@@ -273,13 +275,179 @@ def send_telegram(message):
             payload = {
                 'chat_id': CONFIG['TELEGRAM_CHAT_ID'],
                 'text': message,
-                'parse_mode': 'HTML'
+                'parse_mode': 'HTML',
+                'disable_notification': silent  # 静默通知选项
             }
             session.post(url, json=payload, timeout=5)
-            logger.info(f"Telegram消息已发送: {message}")
+            if not silent:  # 只有非静默消息才记录到日志
+                logger.info(f"Telegram消息已发送: {message}")
         except Exception as e:
             logger.error(f"Telegram发送失败: {str(e)}")
-    print(message)
+    if not silent:  # 只有非静默消息才打印到控制台
+        print(message)
+
+def send_market_data_telegram(symbol, price, indicators, market_state):
+    """发送市场数据到Telegram"""
+    try:
+        # 格式化指标信息
+        rsi = indicators.get('rsi', 0)
+        atr = indicators.get('atr', 0)
+        adx = indicators.get('adx', 0)
+        volume_ratio = indicators.get('volume_ratio', 0)
+        
+        # 确定RSI状态
+        rsi_status = "🔥超买" if rsi > 70 else "❄️超卖" if rsi < 30 else "⚖️中性"
+        
+        # 确定趋势强度
+        trend_strength = "💪强趋势" if adx > 25 else "📈弱趋势" if adx > 20 else "📊震荡"
+        
+        # 确定成交量状态
+        volume_status = "📈活跃" if volume_ratio > 1.2 else "📉低迷" if volume_ratio < 0.8 else "➡️正常"
+        
+        # 市场状态emoji
+        state_emoji = {
+            'TRENDING': '📈',
+            'OVERSOLD': '🟢', 
+            'OVERBOUGHT': '🔴',
+            'RANGING': '↔️'
+        }
+        
+        message = f"""
+📊 <b>{symbol} 市场数据</b>
+
+💰 <b>价格:</b> ${price:.4f}
+📈 <b>市场状态:</b> {state_emoji.get(market_state, '❓')} {market_state}
+
+🔍 <b>技术指标:</b>
+├ RSI: {rsi:.1f} {rsi_status}
+├ ADX: {adx:.1f} {trend_strength}  
+├ ATR: {atr:.4f}
+└ 成交量: {volume_ratio:.2f}x {volume_status}
+
+⏰ {datetime.now().strftime('%H:%M:%S')}
+        """.strip()
+        
+        send_telegram(message, silent=True)  # 静默发送，避免过多通知
+        
+    except Exception as e:
+        logger.error(f"发送市场数据失败: {str(e)}")
+
+def send_signal_analysis_telegram(symbol, signal_data):
+    """发送交易信号分析到Telegram"""
+    try:
+        signal_type = signal_data.get('type', 'NONE')
+        signal_action = signal_data.get('signal', 'NONE')
+        confidence = signal_data.get('confidence', 0)
+        reason = signal_data.get('reason', '无信号')
+        
+        # 获取详细指标信息
+        price = signal_data.get('price', 0)
+        stop_loss = signal_data.get('stop_loss', 0)
+        take_profit = signal_data.get('take_profit', 0)
+        position_size = signal_data.get('size', 0)
+        rsi = signal_data.get('rsi', 0)
+        atr = signal_data.get('atr', 0)
+        volume_ratio = signal_data.get('volume_ratio', 0)
+        market_state = signal_data.get('market_state', 'UNKNOWN')
+        
+        if signal_action == 'BUY':
+            # 计算风险回报比
+            risk = price - stop_loss
+            reward = take_profit - price
+            rr_ratio = reward / risk if risk > 0 else 0
+            
+            # 策略emoji
+            strategy_emoji = "🚀" if signal_type == "MOMENTUM" else "🔄"
+            
+            # 信号强度条
+            confidence_bar = "🟩" * int(confidence/20) + "⬜" * (5-int(confidence/20))
+            
+            # 风险等级
+            if confidence >= 80:
+                risk_level = "🟢 低风险"
+            elif confidence >= 60:
+                risk_level = "🟡 中风险"
+            else:
+                risk_level = "🔴 高风险"
+                
+            # 市场状态emoji
+            state_emoji = {
+                'TRENDING': '📈',
+                'OVERSOLD': '🟢', 
+                'OVERBOUGHT': '🔴',
+                'RANGING': '↔️'
+            }
+            
+            message = f"""
+{strategy_emoji} <b>{symbol} 交易信号确认</b>
+
+📋 <b>策略类型:</b> {signal_type}
+📊 <b>信号强度:</b> {confidence:.1f}% {confidence_bar}
+🎯 <b>风险等级:</b> {risk_level}
+
+💰 <b>交易详情:</b>
+├ 入场价格: ${price:.4f}
+├ 止损价格: ${stop_loss:.4f}
+├ 止盈价格: ${take_profit:.4f}
+├ 仓位大小: {position_size:.4f}
+└ 风险回报比: 1:{rr_ratio:.2f}
+
+🔍 <b>技术分析:</b>
+├ RSI: {rsi:.1f}
+├ ATR: {atr:.4f}
+├ 成交量: {volume_ratio:.2f}x
+└ 市场状态: {state_emoji.get(market_state, '❓')} {market_state}
+
+📝 <b>信号依据:</b> {reason}
+
+⏰ {datetime.now().strftime('%H:%M:%S')}
+            """.strip()
+            
+            send_telegram(message)  # 正常发送，重要信号
+        
+    except Exception as e:
+        logger.error(f"发送信号分析失败: {str(e)}")
+
+def send_trade_execution_telegram(symbol, order_result, signal_data):
+    """发送交易执行结果到Telegram"""
+    try:
+        if order_result and order_result.get('success'):
+            order_info = order_result.get('order', {})
+            
+            message = f"""
+✅ <b>{symbol} 交易执行成功</b>
+
+📋 <b>订单信息:</b>
+├ 订单ID: {order_info.get('orderId', 'N/A')}
+├ 交易类型: {signal_data.get('type', 'UNKNOWN')}
+├ 成交价格: ${float(order_info.get('price', 0)):.4f}
+├ 成交数量: {float(order_info.get('executedQty', 0)):.4f}
+└ 订单状态: {order_info.get('status', 'UNKNOWN')}
+
+📊 <b>风控设置:</b>
+├ 止损价格: ${signal_data.get('stop_loss', 0):.4f}
+└ 止盈价格: ${signal_data.get('take_profit', 0):.4f}
+
+⏰ {datetime.now().strftime('%H:%M:%S')}
+            """.strip()
+            
+        else:
+            error_msg = order_result.get('error', '未知错误') if order_result else '执行失败'
+            
+            message = f"""
+❌ <b>{symbol} 交易执行失败</b>
+
+🚨 <b>错误原因:</b> {error_msg}
+📋 <b>信号类型:</b> {signal_data.get('type', 'UNKNOWN')}
+💰 <b>尝试价格:</b> ${signal_data.get('price', 0):.4f}
+
+⏰ {datetime.now().strftime('%H:%M:%S')}
+            """.strip()
+            
+        send_telegram(message)
+        
+    except Exception as e:
+        logger.error(f"发送交易执行通知失败: {str(e)}")
 
 def get_current_price(symbol, retries=3):
     """增强的价格获取容错机制"""
@@ -522,13 +690,13 @@ class OrderManager:
         """全生命周期订单管理"""
         with self.position_lock:
             if not self._pre_execution_check(signal):
-                return False
+                return {'success': False, 'error': '执行前检查失败'}
                 
             try:
                 # 执行主订单
                 main_order = self._place_main_order(signal)
                 if not main_order:
-                    return False
+                    return {'success': False, 'error': '主订单执行失败'}
                     
                 # 设置风控订单
                 self._place_risk_orders(signal, main_order)
@@ -549,11 +717,12 @@ class OrderManager:
                 monitor_thread.daemon = True
                 monitor_thread.start()
                 
-                return True
+                return {'success': True, 'order': main_order}
             except Exception as e:
-                logger.error(f"订单执行失败: {str(e)}")
-                send_telegram(f"❌ 订单执行失败: {str(e)}")
-                return False
+                error_msg = str(e)
+                logger.error(f"订单执行失败: {error_msg}")
+                send_telegram(f"❌ 订单执行失败: {error_msg}")
+                return {'success': False, 'error': error_msg}
                 
     def _pre_execution_check(self, signal):
         """执行前检查"""
@@ -925,8 +1094,32 @@ def generate_signal(df, symbol, current_balance, trade_history=None):
         if not position_size:
             return None
         
-        # 生成信号
+        # 计算信号强度和分析原因
         if momentum_signal:
+            # 计算动量信号强度
+            strength_factors = {
+                'momentum': min(current['momentum'] * 10, 25),  # 最大25分
+                'rsi': max(0, 30 - (current['rsi'] - 50)) / 30 * 20,  # 最大20分
+                'bb_breakout': 15 if current['close'] > current['bb_upper'] else 0,  # 15分
+                'ema_trend': 15 if current['ema30'] > current['ema50'] else 0,  # 15分
+                'volume': min((current['volume_ratio'] - 1) * 25, 25),  # 最大25分
+                'market_state': 10 if current['market_state'] == 'TRENDING' else 0  # 10分
+            }
+            
+            confidence = sum(strength_factors.values())
+            
+            reasons = []
+            if strength_factors['momentum'] > 0:
+                reasons.append(f"动量突破({current['momentum']:.2%})")
+            if strength_factors['bb_breakout'] > 0:
+                reasons.append("布林带上轨突破")
+            if strength_factors['ema_trend'] > 0:
+                reasons.append("EMA多头排列")
+            if strength_factors['volume'] > 0:
+                reasons.append(f"成交量放大({current['volume_ratio']:.1f}x)")
+            if strength_factors['market_state'] > 0:
+                reasons.append("趋势市场确认")
+            
             return {
                 'symbol': symbol,
                 'signal': 'BUY',
@@ -934,9 +1127,38 @@ def generate_signal(df, symbol, current_balance, trade_history=None):
                 'size': position_size,
                 'price': current['close'],
                 'stop_loss': current['close'] - TRADE_SYMBOLS[symbol]['stop_multiplier']['MOMENTUM'] * current['atr'],
-                'take_profit': current['close'] + TRADE_SYMBOLS[symbol]['profit_multiplier']['MOMENTUM'] * current['atr']
+                'take_profit': current['close'] + TRADE_SYMBOLS[symbol]['profit_multiplier']['MOMENTUM'] * current['atr'],
+                'confidence': min(confidence, 100),  # 限制最大100%
+                'reason': ' + '.join(reasons),
+                'rsi': current['rsi'],
+                'atr': current['atr'],
+                'volume_ratio': current['volume_ratio'],
+                'market_state': current['market_state']
             }
+            
         elif swing_signal:
+            # 计算波段信号强度
+            strength_factors = {
+                'rsi_oversold': max(0, (40 - current['rsi']) / 40 * 30),  # 最大30分
+                'bb_support': 20 if current['close'] < current['bb_lower'] else 0,  # 20分
+                'ema_trend': 15 if current['ema30'] > current['ema50'] else 0,  # 15分
+                'volume': min((current['volume_ratio'] - 1) * 20, 20),  # 最大20分
+                'mean_reversion': 15  # 均值回归基础分
+            }
+            
+            confidence = sum(strength_factors.values())
+            
+            reasons = []
+            if strength_factors['rsi_oversold'] > 0:
+                reasons.append(f"RSI超卖({current['rsi']:.1f})")
+            if strength_factors['bb_support'] > 0:
+                reasons.append("布林带下轨支撑")
+            if strength_factors['ema_trend'] > 0:
+                reasons.append("EMA多头排列")
+            if strength_factors['volume'] > 0:
+                reasons.append(f"成交量配合({current['volume_ratio']:.1f}x)")
+            reasons.append("均值回归机会")
+            
             return {
                 'symbol': symbol,
                 'signal': 'BUY',
@@ -944,7 +1166,13 @@ def generate_signal(df, symbol, current_balance, trade_history=None):
                 'size': position_size,
                 'price': current['close'],
                 'stop_loss': current['close'] - TRADE_SYMBOLS[symbol]['stop_multiplier']['SWING'] * current['atr'],
-                'take_profit': current['close'] + TRADE_SYMBOLS[symbol]['profit_multiplier']['SWING'] * current['atr']
+                'take_profit': current['close'] + TRADE_SYMBOLS[symbol]['profit_multiplier']['SWING'] * current['atr'],
+                'confidence': min(confidence, 100),  # 限制最大100%
+                'reason': ' + '.join(reasons),
+                'rsi': current['rsi'],
+                'atr': current['atr'],
+                'volume_ratio': current['volume_ratio'],
+                'market_state': current['market_state']
             }
         
         return None
@@ -1117,18 +1345,24 @@ def main():
     monitor_thread.start()
     
     # 发送启动通知
+    market_data_status = "✅ 开启" if CONFIG['ENABLE_MARKET_DATA'] else "❌ 关闭"
+    interval_text = f"每{CONFIG['MARKET_DATA_INTERVAL']//60}分钟" if CONFIG['ENABLE_MARKET_DATA'] else "不推送"
+    
     send_telegram(
         f"🚀 <b>交易机器人启动</b>\n"
         f"版本: 1.0 \n"
         f"杠杆: {CONFIG['LEVERAGE']}x\n"
         f"风险: {CONFIG['RISK_PERCENT']*100:.2f}%\n"
-        f"币种: {', '.join(TRADE_SYMBOLS.keys())}"
+        f"币种: {', '.join(TRADE_SYMBOLS.keys())}\n"
+        f"📊 市场数据推送: {market_data_status}\n"
+        f"⏰ 推送频率: {interval_text}"
     )
     
     # 主循环变量
     daily_trade_count = 0
     last_trade_day = datetime.now().strftime('%Y-%m-%d')
     last_save_time = time.time()
+    last_market_data_time = {}  # 记录每个交易对上次发送市场数据的时间
     
     while True:
         try:
@@ -1147,6 +1381,11 @@ def main():
             
             # 遍历交易对
             for symbol in TRADE_SYMBOLS:
+                # 获取当前价格
+                current_price = get_current_price(symbol)
+                if current_price is None:
+                    continue
+                
                 # 获取数据
                 df = fetch_klines(symbol, CONFIG['TRADE_INTERVAL'])
                 if df is None:
@@ -1157,13 +1396,44 @@ def main():
                 if df is None:
                     continue
                 
+                # 获取最新指标数据
+                latest_data = df.iloc[-1]
+                indicators = {
+                    'rsi': latest_data.get('rsi', 0),
+                    'atr': latest_data.get('atr', 0),
+                    'adx': latest_data.get('adx', 0),
+                    'volume_ratio': latest_data.get('volume_ratio', 0),
+                    'ema30': latest_data.get('ema30', 0),
+                    'ema50': latest_data.get('ema50', 0),
+                    'bb_upper': latest_data.get('bb_upper', 0),
+                    'bb_lower': latest_data.get('bb_lower', 0)
+                }
+                
+                market_state = latest_data.get('market_state', 'UNKNOWN')
+                
+                # 发送市场数据到Telegram（控制频率）
+                if CONFIG['ENABLE_MARKET_DATA']:
+                    current_time = time.time()
+                    if (symbol not in last_market_data_time or 
+                        current_time - last_market_data_time[symbol] >= CONFIG['MARKET_DATA_INTERVAL']):
+                        send_market_data_telegram(symbol, current_price, indicators, market_state)
+                        last_market_data_time[symbol] = current_time
+                
                 # 生成信号
                 current_balance = order_manager._get_account_balance()
                 signal = generate_signal(df, symbol, current_balance, order_manager.trade_history)
                 
+                # 发送信号分析（如果有信号）
                 if signal:
+                    send_signal_analysis_telegram(symbol, signal)
+                    
                     # 执行交易
-                    if order_manager.execute_order(signal):
+                    execution_result = order_manager.execute_order(signal)
+                    
+                    # 发送交易执行结果
+                    send_trade_execution_telegram(symbol, execution_result, signal)
+                    
+                    if execution_result and execution_result.get('success'):
                         daily_trade_count += 1
                         time.sleep(60)  # 交易后暂停1分钟
             
