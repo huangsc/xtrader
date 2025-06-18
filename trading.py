@@ -1201,9 +1201,25 @@ if __name__ == "__main__":
     
     # 最终确认
     if not CONFIG['TESTNET']:
-        confirm = input("⚠️  即将连接实盘交易，请确认 (输入 'YES' 继续): ")
-        if confirm != 'YES':
-            print("已取消启动")
-            exit(0)
+        # 检查是否在交互式环境中
+        import sys
+        if sys.stdin.isatty():
+            confirm = input("⚠️  即将连接实盘交易，请确认 (输入 'YES' 继续): ")
+            if confirm != 'YES':
+                print("已取消启动")
+                exit(0)
+        else:
+            # 非交互式环境，检查环境变量确认
+            import os
+            auto_confirm = os.getenv('XTRADER_CONFIRM_LIVE', 'false').lower()
+            if auto_confirm != 'true':
+                logger.error("⚠️ 实盘模式需要确认，但当前在非交互环境中")
+                logger.error("请设置环境变量: export XTRADER_CONFIRM_LIVE=true")
+                logger.error("或者修改config.json中的testnet设置为true")
+                send_telegram("❌ 实盘模式启动失败：需要用户确认")
+                exit(1)
+            else:
+                logger.warning("⚠️ 通过环境变量确认，即将启动实盘交易")
+                send_telegram("⚠️ 实盘交易模式已启动")
     
     main()
