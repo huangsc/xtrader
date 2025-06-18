@@ -810,16 +810,27 @@ class OrderManager:
         try:
             if CONFIG['TRADING_TYPE'] == 'futures':
                 balance = client.safe_request(client.client.futures_account_balance)
-                for asset in balance:
-                    if asset['asset'] == 'USDT':
-                        return float(asset['balance'])
+                if balance and isinstance(balance, list):
+                    for asset in balance:
+                        if asset.get('asset') == 'USDT':
+                            return float(asset.get('balance', 0))
+                    logger.warning("未找到USDT余额信息")
+                else:
+                    logger.warning("期货账户余额信息格式异常")
             else:  # spot
                 account = client.safe_request(client.client.get_account)
-                for balance in account['balances']:
-                    if balance['asset'] == 'USDT':
-                        return float(balance['free'])
+                if account and 'balances' in account:
+                    for balance in account['balances']:
+                        if balance.get('asset') == 'USDT':
+                            return float(balance.get('free', 0))
+                    logger.warning("未找到USDT余额信息")
+                else:
+                    logger.warning("现货账户余额信息格式异常")
         except Exception as e:
             logger.error(f"获取余额失败: {str(e)}")
+        
+        # 如果无法获取余额，返回配置的初始余额
+        logger.info(f"使用配置的初始余额: {CONFIG['INITIAL_BALANCE']}")
         return CONFIG['INITIAL_BALANCE']
     
     def _monitor_order(self, order_id, signal):
@@ -957,18 +968,45 @@ def save_recovery_state(order_manager):
         # 根据交易类型获取持仓和订单信息
         if CONFIG['TRADING_TYPE'] == 'futures':
             # 期货交易：获取持仓信息
-            positions = client.safe_request(client.client.futures_position_information)
-            active_positions = [pos for pos in positions if float(pos['positionAmt']) != 0]
+            try:
+                positions = client.safe_request(client.client.futures_position_information)
+                if positions:
+                    active_positions = [pos for pos in positions if float(pos.get('positionAmt', 0)) != 0]
+                else:
+                    active_positions = []
+            except Exception as e:
+                logger.warning(f"获取期货持仓失败: {str(e)}")
+                active_positions = []
             
             # 获取活跃订单
-            active_orders = client.safe_request(client.client.futures_get_open_orders)
+            try:
+                active_orders = client.safe_request(client.client.futures_get_open_orders)
+                if not active_orders:
+                    active_orders = []
+            except Exception as e:
+                logger.warning(f"获取期货订单失败: {str(e)}")
+                active_orders = []
         else:  # spot
             # 现货交易：获取余额信息（现货没有持仓概念）
-            account = client.safe_request(client.client.get_account)
-            active_positions = [balance for balance in account['balances'] if float(balance['free']) > 0 or float(balance['locked']) > 0]
+            try:
+                account = client.safe_request(client.client.get_account)
+                if account and 'balances' in account:
+                    active_positions = [balance for balance in account['balances'] 
+                                      if float(balance.get('free', 0)) > 0 or float(balance.get('locked', 0)) > 0]
+                else:
+                    active_positions = []
+            except Exception as e:
+                logger.warning(f"获取现货余额失败: {str(e)}")
+                active_positions = []
             
             # 获取活跃订单
-            active_orders = client.safe_request(client.client.get_open_orders)
+            try:
+                active_orders = client.safe_request(client.client.get_open_orders)
+                if not active_orders:
+                    active_orders = []
+            except Exception as e:
+                logger.warning(f"获取现货订单失败: {str(e)}")
+                active_orders = []
         
         recovery_data = {
             'positions': active_positions,
@@ -1025,9 +1063,16 @@ def recover_system_state(order_manager, recovery_state):
         
         if trading_type == 'futures':
             # 期货：检查持仓状态
-            current_positions = client.safe_request(client.client.futures_position_information)
-            active_positions_count = len([p for p in current_positions if float(p['positionAmt']) != 0])
-            status_msg = f"当前持仓: {active_positions_count}个"
+            try:
+                current_positions = client.safe_request(client.client.futures_position_information)
+                if current_positions:
+                    active_positions_count = len([p for p in current_positions if float(p.get('positionAmt', 0)) != 0])
+                    status_msg = f"当前持仓: {active_positions_count}个"
+                else:
+                    status_msg = "当前持仓: 0个"
+            except Exception as e:
+                logger.warning(f"获取持仓信息失败: {str(e)}")
+                status_msg = "持仓状态: 无法获取"
         else:  # spot
             # 现货：检查余额状态
             account = client.safe_request(client.client.get_account)
@@ -1267,21 +1312,39 @@ def initialize_account():
                         client.client.futures_position_information,
                         symbol=symbol
                     )
-                    current_margin_type = position_info[0].get('marginType', 'isolated').lower()
                     
-                    # 只有在不是隔离保证金时才设置
-                    if current_margin_type != 'isolated':
-                        client.safe_request(
-                            client.client.futures_change_margin_type,
-                            symbol=symbol, marginType='ISOLATED'
-                        )
-                        logger.info(f"{symbol} 保证金类型已设置为隔离模式")
+                    # 检查是否有持仓信息
+                    if position_info and len(position_info) > 0:
+                        current_margin_type = position_info[0].get('marginType', 'isolated').lower()
+                        
+                        # 只有在不是隔离保证金时才设置
+                        if current_margin_type != 'isolated':
+                            client.safe_request(
+                                client.client.futures_change_margin_type,
+                                symbol=symbol, marginType='ISOLATED'
+                            )
+                            logger.info(f"{symbol} 保证金类型已设置为隔离模式")
+                        else:
+                            logger.info(f"{symbol} 已是隔离保证金模式")
                     else:
-                        logger.info(f"{symbol} 已是隔离保证金模式")
+                        # 没有持仓信息，尝试直接设置隔离保证金
+                        try:
+                            client.safe_request(
+                                client.client.futures_change_margin_type,
+                                symbol=symbol, marginType='ISOLATED'
+                            )
+                            logger.info(f"{symbol} 保证金类型已设置为隔离模式")
+                        except Exception as set_e:
+                            if "No need to change margin type" in str(set_e):
+                                logger.info(f"{symbol} 保证金类型已正确设置")
+                            else:
+                                logger.warning(f"{symbol} 保证金设置失败: {str(set_e)}")
                         
                 except Exception as margin_e:
                     if "No need to change margin type" in str(margin_e):
                         logger.info(f"{symbol} 保证金类型已正确设置")
+                    elif "list index out of range" in str(margin_e):
+                        logger.info(f"{symbol} 暂无持仓信息，保证金类型将在首次交易时设置")
                     else:
                         logger.warning(f"{symbol} 保证金设置警告: {str(margin_e)}")
                 
