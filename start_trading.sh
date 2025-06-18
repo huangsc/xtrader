@@ -21,18 +21,28 @@ pip install -r requirements.txt > /dev/null 2>&1
 
 # 检查配置文件中的testnet设置
 TESTNET_STATUS=$(python3 -c "
-import json
-with open('config.json', 'r', encoding='utf-8') as f:
-    content = f.read()
-    lines = content.split('\n')
-    clean_lines = []
-    for line in lines:
-        if '//' in line and not line.strip().startswith('\"'):
-            line = line.split('//')[0].rstrip()
-        clean_lines.append(line)
-    clean_content = '\n'.join(clean_lines)
-    config = json.loads(clean_content)
-print(config['api']['testnet'])
+# 直接使用trading.py中的配置加载函数
+import sys
+import os
+sys.path.append('.')
+
+try:
+    # 临时重定向输出，避免打印配置加载信息
+    from io import StringIO
+    old_stdout = sys.stdout
+    sys.stdout = StringIO()
+    
+    from trading import load_config
+    config, trade_symbols = load_config('config.json')
+    
+    # 恢复输出
+    sys.stdout = old_stdout
+    
+    print(config['TESTNET'])
+except Exception as e:
+    # 恢复输出
+    sys.stdout = old_stdout
+    print('true')  # 默认为测试模式
 ")
 
 # 如果是实盘模式，给出警告和设置选项
